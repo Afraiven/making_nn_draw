@@ -16,7 +16,7 @@
     <p>Draw on the canvas above to see the predictions in real-time.</p>
     <p>The LSTM model was trained on data from simple apple drawings, so the generated drawings will resemble "simple quick drawings of an apple".</p>
     <p>Points generated: </p>
-    <span id="pointsGenerated">0/40</span>
+    <span id="pointsGenerated">/40</span>
     <script>
         const canvas = document.getElementById('drawingBoard');
         const ctx = canvas.getContext('2d');
@@ -24,21 +24,99 @@
         let lastPos = null;
         let points = [];
         let interpolationApplied = false; // Flag to track if interpolation was applied
-    
-        canvas.addEventListener('mousedown', (event) => {
+
+        function getMousePos(canvas, event) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: event.clientX - rect.left,
+                y: event.clientY - rect.top
+            };
+        }
+
+        function getTouchPos(canvas, touch) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: touch.clientX - rect.left,
+                y: touch.clientY - rect.top
+            };
+        }
+
+        function drawLine(start, end, color = 'black') {
+            ctx.strokeStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
+            ctx.stroke();
+        }
+
+        function drawPoint(point, color = 'black') {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 2, 0, 2 * Math.PI); // Draws a small circle with radius 2
+            ctx.fill();
+        }
+
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        async function continuouslyPredict(points) {
+            for (let i = 0; i < 35; i++) {
+                try {
+                    console.log(points);
+                    const percentage = Math.min((points.length / 40) * 100, 100).toFixed(0);
+                    document.getElementById('pointsGenerated').innerText = `${points.length}/40 - drawing completed in ${percentage}%`; // Update points generated
+                    const response = await fetch('https://drawing-api.onrender.com/predict', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ points }),
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Server error: ${response.statusText}`);
+                    }
+
+                    const data = await response.json();
+                    console.log('Prediction from server:', data);
+
+                    if (data.prediction && data.prediction.length > 0) {
+                        const predictedPoint = data.prediction[0]; // Assuming a single point is returned
+                        points.push({ x: predictedPoint[0], y: predictedPoint[1] }); // Add the predicted point to the points array
+
+                        // Clear the canvas and redraw all points
+                        clearCanvas();
+                        for (let i = 1; i < points.length; i++) {
+                            drawLine(points[i - 1], points[i], 'red'); // Draw lines connecting all points
+                        }
+
+                    } else {
+                        console.warn('No predicted point returned from server.');
+                        break;
+                    }
+
+                } catch (error) {
+                    console.error('Error sending points to backend:', error);
+                    break; // Exit the loop on error
+                }
+            }
+        }
+
+        function startDrawing(event) {
             drawing = true;
-            lastPos = getMousePos(canvas, event);
+            lastPos = event.type.includes('mouse') ? getMousePos(canvas, event) : getTouchPos(canvas, event.touches[0]);
             points.push(lastPos);
             if (lastPos) {
                 drawLine(lastPos, points[points.length - 1]); // Draw a line from the last position to the current
-            }   
-        });
-    
-        canvas.addEventListener('mouseup', async () => {
+            }
+        }
+
+        function stopDrawing() {
             drawing = false;
             lastPos = null;
             console.log('Drawing finished');
-    
+
             // Apply interpolation only once at the first run
             if (!interpolationApplied) {
                 const numDesiredPoints = 6; // Example desired number of points
@@ -64,94 +142,37 @@
                 }
                 interpolationApplied = false; // Set the flag to true
             }
-    
+
             // Send the points to the FastAPI backend for prediction
-            await continuouslyPredict(points);
-    
+            continuouslyPredict(points);
+
             // Clear the points array for the next drawing
             points = [];
-        });
-    
-        canvas.addEventListener('mousemove', (event) => {
+        }
+
+        function draw(event) {
             if (!drawing) return;
-            const currentPos = getMousePos(canvas, event);
+            const currentPos = event.type.includes('mouse') ? getMousePos(canvas, event) : getTouchPos(canvas, event.touches[0]);
             points.push(currentPos);
             drawPoint(currentPos); // Draw each point individually
+        }
+
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mousemove', draw);
+
+        canvas.addEventListener('touchstart', (event) => {
+            event.preventDefault();
+            startDrawing(event);
         });
-    
-        function getMousePos(canvas, event) {
-            const rect = canvas.getBoundingClientRect();
-            return {
-                x: event.clientX - rect.left,
-                y: event.clientY - rect.top
-            };
-        }
-    
-        function drawLine(start, end, color = 'black') {
-            ctx.strokeStyle = color;
-            ctx.beginPath();
-            ctx.moveTo(start.x, start.y);
-            ctx.lineTo(end.x, end.y);
-            ctx.stroke();
-        }
-
-
-        function drawPoint(point, color = 'black') {
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.arc(point.x, point.y, 2, 0, 2 * Math.PI); // Draws a small circle with radius 2
-            ctx.fill();
-        }
-    
-        function clearCanvas() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-        }
-    
-        async function continuouslyPredict(points) {
-            for (let i = 0; i < 35; i++) {
-                try {
-                    console.log(points);
-                    const percentage = Math.min((points.length / 40) * 100, 100).toFixed(0);
-                    document.getElementById('pointsGenerated').innerText = `${points.length}/40 - drawing completed in ${percentage}%`; // Update points generated
-                    const response = await fetch('https://drawing-api.onrender.com/predict', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ points }),
-                    });
-    
-                    if (!response.ok) {
-                        throw new Error(`Server error: ${response.statusText}`);
-                    }
-    
-                    const data = await response.json();
-                    console.log('Prediction from server:', data);
-    
-                    if (data.prediction && data.prediction.length > 0) {
-                        const predictedPoint = data.prediction[0]; // Assuming a single point is returned
-                        points.push({ x: predictedPoint[0], y: predictedPoint[1] }); // Add the predicted point to the points array
-    
-                        // Clear the canvas and redraw all points
-                        clearCanvas();
-                        for (let i = 1; i < points.length; i++) {
-                            drawLine(points[i - 1], points[i], 'red'); // Draw lines connecting all points
-                        }
-
-                    } else {
-                        console.warn('No predicted point returned from server.');
-                        break;
-                    }
-    
-                } catch (error) {
-                    console.error('Error sending points to backend:', error);
-                    break; // Exit the loop on error
-                }
-            }
-        }
+        canvas.addEventListener('touchend', (event) => {
+            event.preventDefault();
+            stopDrawing();
+        });
+        canvas.addEventListener('touchmove', (event) => {
+            event.preventDefault();
+            draw(event);
+        });
     </script>
-    
-    
-        
 </body>
 </html>
