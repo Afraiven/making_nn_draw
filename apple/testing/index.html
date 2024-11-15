@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Drawing Board</title>
+    <style>
+        canvas {
+            border: 1px solid black;
+        }
+    </style>
+</head>
+<body>
+    <h1>Interactive Drawing Board with LSTM Architecture</h1>
+    <canvas id="drawingBoard" width="255" height="255"></canvas>
+    <p>Draw on the canvas above to see the predictions in real-time.</p>
+    <p>The LSTM model was trained on data from simple apple drawings, so the generated drawings will resemble "simple quick drawings of an apple".</p>
+    <p>Points generated: </p>
+    <span id="pointsGenerated">0/40</span>
+    <script>
+        const canvas = document.getElementById('drawingBoard');
+        const ctx = canvas.getContext('2d');
+        let drawing = false;
+        let lastPos = null;
+        let points = [];
+        let interpolationApplied = false; // Flag to track if interpolation was applied
+    
+        canvas.addEventListener('mousedown', (event) => {
+            drawing = true;
+            lastPos = getMousePos(canvas, event);
+            points.push(lastPos);
+            if (lastPos) {
+                drawLine(lastPos, points[points.length - 1]); // Draw a line from the last position to the current
+            }   
+        });
+    
+        canvas.addEventListener('mouseup', async () => {
+            drawing = false;
+            lastPos = null;
+            console.log('Drawing finished');
+    
+            // Apply interpolation only once at the first run
+            if (!interpolationApplied) {
+                const numDesiredPoints = 6; // Example desired number of points
+                if (points.length > numDesiredPoints) {
+                    const x = points.map((_, index) => index / (points.length - 1));
+                    const f = (t) => {
+                        const n = points.length - 1;
+                        const idx = t * n;
+                        const low = Math.floor(idx);
+                        const high = Math.ceil(idx);
+                        const weight = idx - low;
+                        if (low < 0) return points[0];
+                        if (high >= points.length) return points[points.length - 1];
+                        return {
+                            x: points[low].x * (1 - weight) + points[high].x * weight,
+                            y: points[low].y * (1 - weight) + points[high].y * weight,
+                        };
+                    };
+                    points = Array.from({ length: numDesiredPoints }, (_, i) => {
+                        const t = i / (numDesiredPoints - 1);
+                        return f(t);
+                    });
+                }
+                interpolationApplied = false; // Set the flag to true
+            }
+    
+            // Send the points to the FastAPI backend for prediction
+            await continuouslyPredict(points);
+    
+            // Clear the points array for the next drawing
+            points = [];
+        });
+    
+        canvas.addEventListener('mousemove', (event) => {
+            if (!drawing) return;
+            const currentPos = getMousePos(canvas, event);
+            points.push(currentPos);
+            drawPoint(currentPos); // Draw each point individually
+        });
+    
+        function getMousePos(canvas, event) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: event.clientX - rect.left,
+                y: event.clientY - rect.top
+            };
+        }
+    
+        function drawLine(start, end, color = 'black') {
+            ctx.strokeStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
+            ctx.stroke();
+        }
+
+
+        function drawPoint(point, color = 'black') {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 2, 0, 2 * Math.PI); // Draws a small circle with radius 2
+            ctx.fill();
+        }
+    
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+    
+        async function continuouslyPredict(points) {
+            for (let i = 0; i < 35; i++) {
+                try {
+                    console.log(points);
+                    const percentage = Math.min((points.length / 40) * 100, 100).toFixed(0);
+                    document.getElementById('pointsGenerated').innerText = `${points.length}/40 - drawing completed in ${percentage}%`; // Update points generated
+                    const response = await fetch('https://drawing-api.onrender.com/predict', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ points }),
+                    });
+    
+                    if (!response.ok) {
+                        throw new Error(`Server error: ${response.statusText}`);
+                    }
+    
+                    const data = await response.json();
+                    console.log('Prediction from server:', data);
+    
+                    if (data.prediction && data.prediction.length > 0) {
+                        const predictedPoint = data.prediction[0]; // Assuming a single point is returned
+                        points.push({ x: predictedPoint[0], y: predictedPoint[1] }); // Add the predicted point to the points array
+    
+                        // Clear the canvas and redraw all points
+                        clearCanvas();
+                        for (let i = 1; i < points.length; i++) {
+                            drawLine(points[i - 1], points[i], 'red'); // Draw lines connecting all points
+                        }
+
+                    } else {
+                        console.warn('No predicted point returned from server.');
+                        break;
+                    }
+    
+                } catch (error) {
+                    console.error('Error sending points to backend:', error);
+                    break; // Exit the loop on error
+                }
+            }
+        }
+    </script>
+    
+    
+        
+</body>
+</html>

@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
+from scipy.interpolate import interp1d
 
 
 @tf.keras.utils.register_keras_serializable()
@@ -51,6 +52,7 @@ class FastInteractiveDrawingBoard(FastDrawingBoard):
         self.cid_motion = self.fig.canvas.mpl_connect('motion_notify_event', self.on_motion)
         self.drawing = False
         self.last_pos = None
+        self.points = []
 
     def on_press(self, event):
         if event.inaxes != self.ax:
@@ -58,6 +60,7 @@ class FastInteractiveDrawingBoard(FastDrawingBoard):
         if event.button == 1:  
             self.drawing = True
             self.last_pos = (int(event.xdata), int(event.ydata))
+            self.points.append(self.last_pos)
 
     def on_release(self, event):
         if event.inaxes != self.ax:
@@ -68,17 +71,20 @@ class FastInteractiveDrawingBoard(FastDrawingBoard):
             self.drawing = False
             self.last_pos = None
             
-            points = []
-            points_to_print = []
-            drawn_points = np.argwhere(self.board == 0)
-            self.board[self.board == 0] = 255 
-            step = len(drawn_points) ** 0.8
-            for i in range(0, len(drawn_points), int(step)):
-                points_to_print.append(drawn_points[i][::-1])  
-                points.append(drawn_points[i][::-1])  
+            points_to_print = self.points.copy()
+            self.points = []
+            # make if for example there are 50 points or 10 points, or 1000 points we want to have only 6 points
+            # let's use interpolation for that
 
-            for j in range(35):
-                ypred = rnn_model_prediction(points)
+            num_desired_points = 6
+            if len(points_to_print) > num_desired_points:
+                x = np.linspace(0, 1, len(points_to_print))
+                f = interp1d(x, points_to_print, axis=0)
+                x_new = np.linspace(0, 1, num_desired_points)
+                points_to_print = f(x_new).tolist()
+            print(points_to_print)
+            for _ in range(35):
+                ypred = rnn_model_prediction(points_to_print)
                 points_to_print.append(ypred[0])
                 for i in range(len(points_to_print) - 1):
                     plt.plot(
@@ -86,7 +92,6 @@ class FastInteractiveDrawingBoard(FastDrawingBoard):
                         [points_to_print[i][1], points_to_print[i + 1][1]],
                         color='red'
                     )
-                points.append(ypred[0])
                 plt.xlim(0, 255)
                 plt.ylim(0, 255)  
                 plt.gca().invert_yaxis()  
@@ -106,6 +111,7 @@ class FastInteractiveDrawingBoard(FastDrawingBoard):
         if self.last_pos is not None:
             self.draw_stroke(self.last_pos, current_pos)
         self.last_pos = current_pos
+        self.points.append(current_pos)
         self.update_display()
 
     def update_display(self):
